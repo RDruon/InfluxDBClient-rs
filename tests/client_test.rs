@@ -1,8 +1,9 @@
 use influx_db_client::{point, points, reqwest::Url, Client, Point, Points, Precision, UdpClient};
-use std::fs::File;
 use std::io::Read;
+use std::iter::FromIterator;
 use std::thread::sleep;
 use std::time::Duration;
+use std::{array::IntoIter, fs::File};
 
 fn block_on<F: std::future::Future>(f: F) -> F::Output {
     tokio::runtime::Runtime::new().unwrap().block_on(f)
@@ -81,13 +82,28 @@ fn query() {
         let mut client = Client::default().set_authentication("root", "root");
         client.switch_database(dbname);
         client.create_database(client.get_db()).await.unwrap();
-        let point = Point::new("test3").add_field("foo", "bar");
+        let point = Point::new("test3")
+            .add_field("foo", "bar")
+            .add_tag("mytag", "baz");
         let point1 = point.clone();
         let point = point.add_timestamp(1_508_981_970);
         let point1 = point1.add_timestamp(1_508_982_026);
 
         client.write_point(point, None, None).await.unwrap();
-        client.query("select * from test3", None).await.unwrap();
+
+        let params = std::collections::HashMap::<_, _>::from_iter(IntoIter::new(
+            [("tag_value", "baz")],
+        ));
+        let bind_params = serde_json::to_string(&params).unwrap();
+
+        client
+            .query(
+                r#"select * from test3 where "mytag" = $tag_value"#,
+                None,
+                Some(bind_params.as_str()),
+            )
+            .await
+            .unwrap();
         client.write_point(point1, None, None).await.unwrap();
         client.drop_measurement("test3").await.unwrap();
         client.drop_database(client.get_db()).await.unwrap();
@@ -108,7 +124,10 @@ fn use_macro() {
         let points = points![point, point1];
         client.write_points(points, None, None).await.unwrap();
 
-        client.query("select * from test4", None).await.unwrap();
+        client
+            .query("select * from test4", None, None)
+            .await
+            .unwrap();
 
         client.drop_measurement("test4").await.unwrap();
     });
@@ -255,7 +274,7 @@ bind-address = "127.0.0.1:{rpc_port}"
 
         client.write_point(point, None, None).await.unwrap();
 
-        client.query("select * from foo", None).await.unwrap();
+        client.query("select * from foo", None, None).await.unwrap();
 
         client.drop_measurement("foo").await.unwrap();
         client.drop_database(client.get_db()).await.unwrap();

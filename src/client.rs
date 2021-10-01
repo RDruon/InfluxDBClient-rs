@@ -155,7 +155,10 @@ impl Client {
                     serialization::conversion(&err),
                 )),
                 500 => Err(error::Error::RetentionPolicyDoesNotExist(err)),
-                status => Err(error::Error::Unknow(format!("Received status code {}", status))),
+                status => Err(error::Error::Unknow(format!(
+                    "Received status code {}",
+                    status
+                ))),
             }
         }
     }
@@ -165,8 +168,9 @@ impl Client {
         &self,
         q: &str,
         epoch: Option<Precision>,
+        bind_params: Option<&str>,
     ) -> impl Future<Output = Result<Option<Vec<Node>>, error::Error>> {
-        self.query_raw(q, epoch).map_ok(|t| t.results)
+        self.query_raw(q, epoch, bind_params).map_ok(|t| t.results)
     }
 
     /// Query and return data, the data type is `Option<Vec<Node>>`
@@ -174,9 +178,10 @@ impl Client {
         &self,
         q: &str,
         epoch: Option<Precision>,
+        bind_params: Option<&str>,
     ) -> impl Future<Output = Result<ChunkedQuery<'static, IoRead<Cursor<Bytes>>>, error::Error>>
     {
-        self.query_raw_chunked(q, epoch)
+        self.query_raw_chunked(q, epoch, bind_params)
     }
 
     /// Drop measurement
@@ -189,21 +194,21 @@ impl Client {
             serialization::quote_ident(measurement)
         );
 
-        self.query_raw(&sql, None).map_ok(|_| ())
+        self.query_raw(&sql, None, None).map_ok(|_| ())
     }
 
     /// Create a new database in InfluxDB.
     pub fn create_database(&self, dbname: &str) -> impl Future<Output = Result<(), error::Error>> {
         let sql = format!("Create database {}", serialization::quote_ident(dbname));
 
-        self.query_raw(&sql, None).map_ok(|_| ())
+        self.query_raw(&sql, None, None).map_ok(|_| ())
     }
 
     /// Drop a database from InfluxDB.
     pub fn drop_database(&self, dbname: &str) -> impl Future<Output = Result<(), error::Error>> {
         let sql = format!("Drop database {}", serialization::quote_ident(dbname));
 
-        self.query_raw(&sql, None).map_ok(|_| ())
+        self.query_raw(&sql, None, None).map_ok(|_| ())
     }
 
     /// Create a new user in InfluxDB.
@@ -229,14 +234,14 @@ impl Client {
             }
         };
 
-        self.query_raw(&sql, None).map_ok(|_| ())
+        self.query_raw(&sql, None, None).map_ok(|_| ())
     }
 
     /// Drop a user from InfluxDB.
     pub fn drop_user(&self, user: &str) -> impl Future<Output = Result<(), error::Error>> {
         let sql = format!("Drop user {}", serialization::quote_ident(user));
 
-        self.query_raw(&sql, None).map_ok(|_| ())
+        self.query_raw(&sql, None, None).map_ok(|_| ())
     }
 
     /// Change the password of an existing user.
@@ -251,7 +256,7 @@ impl Client {
             serialization::quote_literal(passwd)
         );
 
-        self.query_raw(&sql, None).map_ok(|_| ())
+        self.query_raw(&sql, None, None).map_ok(|_| ())
     }
 
     /// Grant cluster administration privileges to a user.
@@ -264,7 +269,7 @@ impl Client {
             serialization::quote_ident(user)
         );
 
-        self.query_raw(&sql, None).map_ok(|_| ())
+        self.query_raw(&sql, None, None).map_ok(|_| ())
     }
 
     /// Revoke cluster administration privileges from a user.
@@ -277,7 +282,7 @@ impl Client {
             serialization::quote_ident(user)
         );
 
-        self.query_raw(&sql, None).map_ok(|_| ())
+        self.query_raw(&sql, None, None).map_ok(|_| ())
     }
 
     /// Grant a privilege on a database to a user.
@@ -296,7 +301,7 @@ impl Client {
             serialization::quote_ident(user)
         );
 
-        self.query_raw(&sql, None).map_ok(|_| ())
+        self.query_raw(&sql, None, None).map_ok(|_| ())
     }
 
     /// Revoke a privilege on a database from a user.
@@ -315,7 +320,7 @@ impl Client {
             serialization::quote_ident(user)
         );
 
-        self.query_raw(&sql, None).map_ok(|_| ())
+        self.query_raw(&sql, None, None).map_ok(|_| ())
     }
 
     /// Create a retention policy for a database.
@@ -361,7 +366,7 @@ impl Client {
             }
         };
 
-        self.query_raw(&sql, None).map_ok(|_| ())
+        self.query_raw(&sql, None, None).map_ok(|_| ())
     }
 
     /// Drop an existing retention policy for a database.
@@ -384,7 +389,7 @@ impl Client {
             serialization::quote_ident(database)
         );
 
-        self.query_raw(&sql, None).map_ok(|_| ())
+        self.query_raw(&sql, None, None).map_ok(|_| ())
     }
 
     fn send_request(
@@ -392,8 +397,12 @@ impl Client {
         q: &str,
         epoch: Option<Precision>,
         chunked: bool,
+        bind_params: Option<&str>,
     ) -> impl Future<Output = Result<Response, error::Error>> {
         let mut param = vec![("db", self.db.as_str()), ("q", q)];
+        if let Some(bind_params) = bind_params {
+            param.push(("params", bind_params));
+        }
 
         if let Some(ref t) = epoch {
             param.push(("epoch", t.to_str()))
@@ -444,8 +453,9 @@ impl Client {
         &self,
         q: &str,
         epoch: Option<Precision>,
+        bind_params: Option<&str>,
     ) -> impl Future<Output = Result<Query, error::Error>> {
-        let resp_future = self.send_request(q, epoch, false);
+        let resp_future = self.send_request(q, epoch, false, bind_params);
         async move { Ok(resp_future.await?.json().await?) }
     }
 
@@ -454,9 +464,10 @@ impl Client {
         &self,
         q: &str,
         epoch: Option<Precision>,
+        bind_params: Option<&str>,
     ) -> impl Future<Output = Result<ChunkedQuery<'static, IoRead<Cursor<Bytes>>>, error::Error>>
     {
-        let resp_future = self.send_request(q, epoch, true);
+        let resp_future = self.send_request(q, epoch, true, bind_params);
         async move {
             let response = resp_future.await?;
             let bytes = Cursor::new(response.bytes().await?);
